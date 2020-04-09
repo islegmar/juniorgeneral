@@ -58,8 +58,8 @@ do
       ;;
     f) file=$OPTARG ;;
     k) split=$OPTARG ;;
-    F) front=$OPTARG ;;
-    B) back=$OPTARG ;;
+    F) fileFront=$OPTARG ;;
+    B) fileBack=$OPTARG ;;
     *)
       echo "Invalid option: -$OPTARG" >&2
       exit 1
@@ -98,7 +98,7 @@ w_h=`magick identify -format "%w %h" $file`
 width=`echo $w_h|cut -d ' ' -f 1,1`
 height=`echo $w_h|cut -d ' ' -f 2,2`
 
-convert $file -crop ${width}x${split}+0+0  $fileFront
-convert $file -crop ${width}x99+0+${split} $fileBack
+convert $file -chop 0x${split}+0+0  $fileBack
+convert $file -crop 0x${split}+0+0  $fileFront
 
 echo "Image $file split in front: $fileFront and back: $fileBack!"
