@@ -11,5 +11,10 @@ do
 
   [ ! -d $dir ] && mkdir -p $dir
 
-  splitBackFront.sh -f $file -k $split -B $dir/${baseFile}-back.png -F $dir/${baseFile}-front.png
+  #echo "$file : $split : $dir/${baseFile}.png"
+  splitBackFront.sh \
+    -p \
+    -i $file \
+    -k $split \
+    -o $dir/${baseFile}.png 
 done < $cfgFile
