@@ -2,6 +2,15 @@
 
 cfgFile="config/images.csv"
 
+cat<<EOD
+=================================
+Divide the images in images/changed02 several times
+and keep them in config so we check the division point
+Also add entries in $cfgFile
+=================================
+EOD
+read
+
 [ ! -f $cfgFile ] && touch $cfgFile
 
 for f in $(find images/changed02 -type f -name '*.png')
@@ -24,3 +33,12 @@ do
   fi
 
 done
+
+cat<<EOD
+=================================
+Go to config, find the division point and update 
+the file $cfgFile MANUALLY
+
+NEXT : 30-allSplitBackFront.sh
+=================================
+EOD

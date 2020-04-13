@@ -1,19 +1,16 @@
 #!/bin/bash
+#convert $fileFront -background white -alpha remove -alpha off $tmpDir/front.png
+#convert $fileBack  -background white -alpha remove -alpha off $tmpDir/back.png
 
 # =================================================
 # Variables
 # =================================================
 silent=0
-file="army.png"
-fileBack="back.png"
-fileFront="front.png"
-patternBack=""
-patternFront=""
-patternFullImage=""
-# TODO : remove => now it is used in splitBackFront so we already get
-# the images in the scale we want (1/72)
-hInPx="280"
-tmpDir=/tmp/$(basename $0)
+#tmpFile=/tmp/$(basename $0).$$
+tmpFile=/tmp/$(basename $0)
+outFile="army.png"
+images=""  # List of all images used as input
+isImgFull=0
 # Reize allowed im the images (in %)
 resizeLessPerc=90
 resizeMorePerc=110
@@ -25,9 +22,12 @@ canvasW=$(echo "8.27*$resolution"|bc -l)
 canvasH=$(echo "11.69*$resolution"|bc -l)
 # In pixels, we want to leave 1 cm more or less that with a resolution 300ppi
 # than means 100px
-borderCanvas=20
+borderCanvas=10
 # Border in the image (px)
-imageBorder=10
+imageBorder=0
+
+cellWithIn=6
+cellNumRows=2
 
 # =================================================
 # Functions
@@ -38,47 +38,31 @@ NAME
        `basename $0` - Generates an army using a back and front images 
 
 SYNOPSIS
-       `basename $0` [-s] [-o file] [-b file] [-f file] [-B pattern] [-F pattern] [-t dir] [-H number]
+       `basename $0` [-s] [-F] [-o file] [-r number] [-w inches] images
 
 DESCRIPTION
        Generates an army in two modes:
-       + If B / F is given : put them together to make the figures with back and front, glue together 
+       + If images are "not full" : put them together to make the figures with back and front, glue together 
          to make rows and glue rows together to make the army
-       + If S is given : get random figures and fill the entire page with it
+       + If images "are full" : get random figures and fill the entire page with it
+
+       -F
+              Images provided are "full" (with front/back joined). Otherwise the images are only the
+              front and the back are found changing '-front' => '-back'
 
        -o file
-              Output file with the image containing the army (def: $file)
+              Output file with the image containing the army (def: $outFile)
 
-       -b file
-              File with the back image (def: $fileBack)
+       -r number
+              Number of rows in each group (def: $cellNumRows)
 
-       -f file
-              File with the front image (def: $fileFront)
-
-       -B pattern
-              Pattern with the back images. If specified the files will be <pattern>-<num>.<ext>
-
-       -F pattern
-              Pattern with the back images. If specified the files will be <pattern>-<num>.<ext>
-
-       -S pattern
-              Pattern with the full images
-
-       -H number
-              Given the type of army and the scale, which is the expected height in pixels so when printed
-              they are properly scaled. For example, if we have an army of people (height:1.70 m) and we 
-              want to print it in a printer (300ppi) with a scale 1/72 then the value will be 280
-
-              1.70 m => 17000 mm => (1/72) 23.6 mm => (1 inch = 25.4 mm) 0.93 inches => (300ppi) 278.9 pixels
-
-              TODO : let make the calcul for us specifying
-              - Desire height (def: 1.70m)
-              - Scale (def: 1/72)
-              - Resolution (def: 300)
-
-       -t dir
-              Temporaty folder where the images will bew stored (def: $tmpDir)
+       -w inches
+              Width (in inches) for every cell (def: $cellWithIn)
 EOF
+}
+
+function trace() {
+  [ $silent -eq 0 ] && echo $*
 }
 
 # TODO : patillero
@@ -95,158 +79,221 @@ function getMaxH() {
   echo $(ls -1 $* |xargs identify -format "%h\n"|sort -nr|head -n 1)
 }
 
+function getRandomValue() {
+  local _images=$*
+ 
+  # Pick a random image
+  local _total=$(echo $_images|wc -w)
+  local _ind=$(( $RANDOM % ${_total} ))
+
+  echo $_images|cut -d ' ' -f $(($_ind+1)),$(($_ind+1)) 
+}
+
+# Random resize between [resizeLessPerc, resizeMorePerc]
+function getRandomResize() {
+  if [ $resizeMorePerc -eq $resizeLessPerc ]
+  then
+    echo $resizeMorePerc
+  else
+    echo $(( ($RANDOM % ($resizeMorePerc-$resizeLessPerc))+$resizeLessPerc ))
+  fi
+}
+
 function getRandomImage() {
-  local file=$1
-  local border=$2
-  shift 3
-  local images=$*
+  local _file=$1
+  local _border=$2
+  shift 2
+  local _images=$*
 
   # Pick a random image
-  local total=$(echo $images|wc -w)
-  local ind=$(( $RANDOM % $total ))
-  local image=$( echo $images|cut -d ' ' -f $(($ind+1)),$(($ind+1)) )
+  local _image=$( getRandomValue $_images )
 
   # Random resize between [resizeLessPerc, resizeMorePerc]
-  local resize=$(( ($RANDOM % ($resizeMorePerc-$resizeLessPerc))+$resizeLessPerc ))
+  local _resize=$( getRandomResize )
 
-  # Final image = resize + border
-  convert -resize ${resize}% -border $border -bordercolor white $image $file
+  # Final image = resize + border around
+  if [ $isImgFull -eq 1 ]
+  then
+    convert -resize ${_resize}% -border ${_border} -bordercolor white ${_image} ${_file}
+  # It is the front image : resize and add some borders in the sides (the top will see when 
+  # we get all the images and align them
+  else
+    convert \( -size ${_border}x xc:white \)     \
+            \( -resize  ${_resize}% ${_image} \) \
+            \( -size ${_border}x xc:white \)     \
+            +append \
+            ${_file}
+  fi
 }
 
-# Generates a row of elements (with random) with back & front 
-# - total : number of elements we have to chose
-# - size  : number of elements we put in the row
-# - file  : destination file
-# In case there is transparency (maybe we have "removed" the small basis that comes with the 
-# figure), remove it in the back/front with white
-#convert $fileFront -background white -alpha remove -alpha off $tmpDir/front.png
-#convert $fileBack  -background white -alpha remove -alpha off $tmpDir/back.png
-function genRow() {
-  local total=$1
-  local size=$2
-  local file=$3
+# Build a "cell" that depending on the configuration can be
+# composed by just one image or a group of them
+function getCell() {
+  local img=$1
+  local imageBorder=$2
+  shift 2
+  local images=$*
+  
+  getRandomImage $img $imageBorder $images
+}
 
-  # TODO 
-  local tmpFile=$tmpDir/genRow.$$.png
+# Build a rectangle with a group of elements
+# @width : with in Inches that form the bases
+# @numRows : number of rows (we prefer this method that specify inches)
+# This method is used working with front / back separated; I have tried to be "agnotstic"
+# if the images are complete or not but it makes too difficult and probably has no sense
+function getCellGroup() {
+  local _outImg=$1
+  local _imageBorder=$2
+  local _width=$3
+  local _numRows=$4
+  shift 4
+  local _images=$*
+  
+  local _tmpFile=${tmpFile}.getCellGroup
+  rm ${_tmpFile}* 2>/dev/null
 
-  for(( col=0; col<$size; col++))
+  # Build one by one all the rows an then put them together
+  rm ${_tmpFile}.row.*.png 2>/dev/null
+  local _row=0
+  for ((_row=0;_row<${_numRows};_row++))
   do
-    ind=$(( $RANDOM % $total ))
+    # Ok, the plan is:
+    # - Create row with back
+    # - Create row with front
+    # - Put them together and create the row
+    # When building the front/back we align them and leave space to the highest
 
-    # Put together back + front so we get one piece
-    # The union line is a grey line so we can folde there
+    local _freeW=$((${_width}*${resolution}))
+
+    rm ${_tmpFile}.col.*.png 2>/dev/null
+    local _col=0
+    for ((_col=0; ;_col++))
+    do
+      local _imageFront=$( getRandomValue $_images )
+      local _imageBack=$( echo  $_imageFront|sed -e 's/-front/-back/' )
+      local _resize=$( getRandomResize )
+
+      # Generate the single image for this col (front and back)
+      convert \( -size ${_imageBorder}x xc:red \)     \
+              \( -resize ${_resize}% ${_imageFront} \)  \
+              \( -size ${_imageBorder}x xc:red \)     \
+              +append                                   \
+              ${_tmpFile}.front.${_col}.png 
+
+      convert \( -size ${_imageBorder}x xc:red \)     \
+              \( -resize ${_resize}% ${_imageBack} \)   \
+              \( -size ${_imageBorder}x xc:red \)     \
+              +append                                   \
+              ${_tmpFile}.back.${_col}.png 
+
+      trace "Col : ${_col}, frontW : $(identify -format "%w" ${_tmpFile}.front.${_col}.png), backW : $( identify -format "%w" ${_tmpFile}.back.${_col}.png )"
+
+      local _imgW=$(identify -format "%w" ${_tmpFile}.front.${_col}.png )
+
+      # There is room for this image
+      if [ ${_imgW} -le ${_freeW} ]
+      then
+        _freeW=$((${_freeW}-${_imgW}))
+      # Remove the last image created because there is no room
+      else
+        rm ${_tmpFile}.back.${_col}.png 
+        rm ${_tmpFile}.front.${_col}.png 
+      fi
+
+      # Check again because if the block we have just made is bigger than
+      # the remainign probably the next block we will have the same dimensions
+      # and it has no sense to continue
+      if [ ${_imgW} -gt ${_freeW} ]
+      then
+        # Ok, I have try to make it in a sigle command but I do not 
+        # find the way to concat all the images (eg.back) in a image stack \( ... \)
+        # so,,,
+        convert  ${_tmpFile}.back.*.png  -gravity north +append ${_tmpFile}.rowBack.${_row}.png
+        convert  ${_tmpFile}.front.*.png -gravity south +append ${_tmpFile}.rowFront.${_row}.png
+
+        # Now we should create a row that should be: basis + back + front + basis but
+        # becauase every back/front have different sizes let's do it at the end when we
+        # get the max values
+        break
+      fi
+    done # loop cols
+  done # loop rows
+
+  # Create the basis and build the rows
+  local _maxW=$(getMaxW ${_tmpFile}.rowBack.*.png)
+  local _maxH=$(getMaxH ${_tmpFile}.rowBack.*.png)
+  local _file=""
+  for ((_row=0;_row<${_numRows};_row++))
+  do
+    trace "Row : ${_row}, frontW : $(identify -format "%w" ${_tmpFile}.rowFront.${_row}.png), backW : $( identify -format "%w" ${_tmpFile}.rowBack.${_row}.png )"
     montage \
-      $tmpDir/back/$ind.png \
-      $tmpDir/front/$ind.png \
-      -tile 1x2 \
-      -geometry +0+1 \
-      -background gray \
-      $tmpFile
-
-    if [ $col -eq 0 ]
-    then
-      cp $tmpFile $file
-    else
-      montage \
-        $file \
-        $tmpFile \
-        -tile 2x1 \
-        -geometry +0+0 \
-        -background white \
-        $file
-    fi
-  done
-}
-
-# Taking a list of rows generated git genRow() create
-# an army with them "glue together" with some terrain blocks
-# - row_patten : pattern to "select" the rows (they will be sorted)
-# - size       : total size, so we can make minor adjustments
-function genArmy() {
-  local file=$1
-  shift 
-  local fRows=$*
-  
-  trace "Generating army ..."
-  # Generate the basis
-  maxW=$(getMaxW $fRows)
-  maxH=$(getMaxH $fRows)
-
-  #convert -size "${maxW}x$((${maxH}/4))" xc:"#4d2600" $tmpDir/basis.png
-  #convert -size "${maxW}x$((${maxH}/4))" xc:"#4d2600" $tmpDir/basis.png
-  
-  echo "Terrain : $maxW" 
-  convert -resize ${maxW}x -crop "${maxW}x$((${maxH}/4))"+0+0 resources/mud.png $tmpDir/basis.png
-  convert -resize ${maxW}x -crop "${maxW}x$((${maxH}/2))"+0+0 resources/mud.png $tmpDir/basis-extended.png
-
-  let ind=0
-  for fRow in $fRows
-  do
-    if [ $ind -eq 0 ]
-    then
-      montage \
-        $fRow \
-        $tmpDir/basis.png \
-        -tile 1x2 \
-        -geometry +0+0 \
-        -background white \
-        $file
-    else
-      montage \
-        $fRow \
-        $tmpDir/basis-extended.png \
-        $file \
-        -tile 1x3 \
-        -geometry +0+0 \
-        -background white \
-        $file
-    fi
-
-    ind=$(($ind+1))
+      \( -size "${_maxW}x$((${_maxH}/4))" xc:"#4d2600"  \) \
+      ${_tmpFile}.rowBack.${_row}.png \
+      \( -size "${_maxW}x2" xc:gray \) \
+      ${_tmpFile}.rowFront.${_row}.png \
+      \( -size "${_maxW}x$((${_maxH}/4))" xc:"#4d2600"  \) \
+      -tile 1x \
+      -geometry +0+0 \
+      -background white \
+     ${_tmpFile}.row.${_row}.png 
   done
 
+  # Now just put all the rows together
   montage \
-    $tmpDir/basis.png \
-    $file \
-    -tile 1x2 \
-    -geometry +0+0 \
+    ${_tmpFile}.row.*.png \
+    -tile 1x \
+    -geometry +0+00 \
+    -gravity north \
     -background white \
-    $file
-}
+    ${_outImg}
 
+  # Clean up
+  rm ${_tmpFile}* 2>/dev/null
+
+  #echo ${_outImg}
+}
 
 # =================================================
 # Arguments
 # =================================================
-while getopts "hso:t:f:b:F:B:H:S:" opt
+while getopts "hso:Fr:w:" opt
 do
   case $opt in
-    s) silent=1 ;;
     h)
       help
       exit 0
       ;;
-    o) file=$OPTARG ;;
-    f) fileFront=$OPTARG ;;
-    b) fileBack=$OPTARG ;;
-    F) patternFront=$OPTARG ;;
-    B) patternBack=$OPTARG ;;
-    S) patternFullImage=$OPTARG ;;
-    H) hInPx=$OPTARG ;;
-    t) tmpDir=$OPTARG ;;
+    s) silent=1 ;;
+    o) outFile=$OPTARG ;;
+    F) isImgFull=1 ;;
+    r) cellNumRows=$OPTARG ;;
+    w) cellWithIn=$OPTARG ;;
     *)
       echo "Invalid option: -$OPTARG" >&2
       exit 1
       ;;
   esac
 done
+shift $(( OPTIND - 1 ))
+images=$*
 
 # --- Check Arguments
 errors=""
 
-if [[ -z "$file" ]]
+if [[ -z "$outFile" ]]
 then
   errors="${errors}A destination file  must be specified. "
+fi
+
+if [[ $(echo $images|wc -w) -eq 0 ]]
+then
+  errors="${errors}You must specify input images. "
+else
+  for f in $images
+  do
+    [ ! -f $f ] && errors="${errors}File $f does not exit. "
+  done
 fi
 
 if [[ ! -z "$errors" ]]
@@ -258,134 +305,87 @@ fi
 # =================================================
 # main
 # =================================================
+rm ${tmpFile}* 2>/dev/null
+
 source ./funcs.sh
 
-rebuildDir "$tmpDir"
+# Generate random "cell of images" using the images provided and put "as much as possible" in a canvas
+# Depending on the parameters the cell can be:
+# - Individual figure
+# - Group of them
 
-# Generate random images from a list and put "as much as possible" in a canvas
-if [ ! -z "$patternFullImage" ]
-then
-  images=$(find $patternFullImage -type f -name '*.png')
+# Now generate random images and add them
+# TODO : sure this can be done with less temporary files but ...
+freeH=$(roundValue "${canvasH}-2*${borderCanvas}")
+rm $tmpFile.row.${row}.png 2>/dev/null
+for((row=0; ; row++))
+do
+  tmpImgRow=$tmpFile.row.${row}.png
+  trace "Building row $row (free : $freeH) ..."
 
-  # Now generate random images and add them
-  # TODO : sure this can be done with less temporary files but ...
-  freeH=$(roundValue "${canvasH}-2*${borderCanvas}")
-  for((row=0; ; row++))
+  freeW=$(roundValue "${canvasW}-2*${borderCanvas}")
+  rm $tmpFile.col.*.png 2>/dev/null
+  for((col=0; ; col++))
   do
-    echo "Building row $row (free : $freeH) ..."
-    tmpRowImg=$tmpDir/image_${row}.png
+    tmpImgCol=$tmpFile.col.${col}.png
+    getCellGroup $tmpImgCol $imageBorder $cellWithIn $cellNumRows $images
+    convert -border 10 -bordercolor white $tmpImgCol $tmpImgCol
 
-    freeW=$(roundValue "${canvasW}-2*${borderCanvas}")
-    for((col=0; ; col++))
-    do
-      #echo "col:$col, freeW:$freeW..."
-      tmpImg=$tmpDir/image_${row}_${col}.png
-      getRandomImage $tmpImg $imageBorder $images
+    imgW=$(identify -format "%w" $tmpImgCol)
 
-      imgW=$(identify -format "%w" $tmpImg)
-
-      # There is room for this image
-      if [ $imgW -le $freeW ]
-      then
-        freeW=$((${freeW}-${imgW}))
-      # Montage all the images in a row and go to the next row
-      else
-        montage \
-          $tmpDir/image_${row}_*.png \
-          -tile x1 \
-          -geometry +0+0 \
-          -gravity north \
-          -background white \
-          $tmpRowImg 
-        break
-      fi
-    done # loop cols
-
-    imgH=$(identify -format "%h" $tmpRowImg)
-
-    # There is room for this row
-    if [ $imgH -le $freeH ]
+    # There is room for this image
+    trace "cellW : $imgW, freeW : $freeW"
+    if [ $imgW  -le  $freeW  ]
     then
-      freeH=$((${freeH}-${imgH}))
-    # Put all the rows together and exit
+      freeW=$((${freeW}-${imgW}))
+    # Remove what we have done
     else
-      fileRows=$(ls -1 $tmpDir/image_*.png|grep 'image_[0-9]*.png')
-      trace "Building the army with the rows $fileRows ..."
-      montage \
-        $fileRows \
-        -tile 1x \
-        -geometry +0+0 \
-        -gravity north \
-        -background white \
-        $file
+      rm $tmpImgCol
+    fi
+
+    if [ $imgW  -gt  $freeW  ]
+    then
       break
     fi
-  done
-  convert -border $borderCanvas -bordercolor white $file $file
-# Generate a serie of rows and put together
-else
-  # We can have several fromnt/back images and we have to mix them. 
-  total=0
-  
-  # Copy all the fronts to a folder so we can manipulate them
-  rebuildDir "$tmpDir/front"
-  totFront=0
-  resizes=""
-  for f in $(ls -1 $patternFront|sort)
-  do
-    resize=$(($hInPx + ($RANDOM % 30)))
-    resizes="${resizes}${resize} "
-  
-    echo "Resize front $totFront : $resize"
-    convert $f -resize "x${resize}" $tmpDir/front/$totFront.png
-    
-    totFront=$(($totFront+1))
-  done
-  
-  # Copy all the backs to a folder so we can manipulate them
-  rebuildDir "$tmpDir/back"
-  totBack=0
-  echo "resizes : $resizes"
-  for f in $(ls -1 $patternBack|sort)
-  do
-    resize=$(echo ${resizes}|cut -d ' ' -f $(($totBack+1)),$(($totBack+1)))
-  
-    echo "Resize back $totBack : $resize"
-    convert $f -resize "x${resize}" $tmpDir/back/$totBack.png
-    
-    totBack=$(($totBack+1))
-  done
-  
-  # TODO : verify both numbers are the same
-  total=$totFront
-  
-  # Resize to the same height
-  maxH=$(getMaxH $tmpDir/back/* $tmpDir/front/*)
-  
-  # Resize the fronts
-  for f in $(ls -1 $tmpDir/front/*)
-  do
-    echo "Converting $f ..."
-    w=$(identify -format "%w" $f)
-    convert -size ${w}x${maxH} xc:white $f -gravity south -composite $f
-  done
-  
-  # Resize the backs
-  for f in $(ls -1 $tmpDir/back/*)
-  do
-    echo "Converting $f ..."
-    w=$(identify -format "%w" $f)
-    convert -size ${w}x${maxH} xc:white $f -gravity north -composite $f
-  done
-  
-  # Generate the rows
-  for(( row=0; row<3; row++))
-  do
-    trace "Generating Row $row ..."
-    tmpFile=$tmpDir/row_${row}.png
-    genRow $total 8 $tmpFile
-  done
-  
-  # Generate the army
-  genArmy $file $tmpDir/row_*.png
-fi
+  done # loop cols
+
+  # Make the row with all the cells
+  trace "Make the row $tmpImgRow with $tmpFile.col.*.png ..."
+
+  montage \
+    $tmpFile.col.*.png \
+    -tile x1 \
+    -geometry +0+0 \
+    -gravity north \
+    -background white \
+    $tmpImgRow
+
+  imgH=$(identify -format "%h" $tmpImgRow)
+
+  trace "imgH : $imgH, freeH : $freeH"
+  # There is room for this row
+  if [ $imgH -le $freeH ]
+  then
+    freeH=$((${freeH}-${imgH}))
+  # Put all the rows together and exit
+  else
+    rm $tmpImgRow
+  fi
+
+  if [ $imgH -gt $freeH ]
+  then
+    break
+  fi
+done
+
+trace "Building the army with the rows ..."
+montage \
+  $tmpFile.row.*.png \
+  -tile 1x \
+  -geometry +0+0 \
+  -gravity north \
+  -background white \
+  $outFile
+convert -border $borderCanvas -bordercolor white $outFile $outFile
+
+#rm ${tmpFile}* 2>/dev/null
