@@ -5,10 +5,13 @@
 # =================================================
 silent=0
 image=""
-inDir="/tmp/$(basename $0).in"
-workDir="/tmp/$(basename $0).work"
-tmpDir="/tmp/$(basename $0).tmp"
+inDir="/tmp/$(basename $0).$$.in"
+workDir="/tmp/$(basename $0).$$.work"
+tmpDir="/tmp/$(basename $0).$$.tmp"
 dstDir=""
+# If split done once
+doSplitOnce=0
+splitOnceMode="rows"
 
 # =================================================
 # Functions
@@ -19,7 +22,7 @@ NAME
        `basename $0` - Split an image in boxes containing the composed images, removing blanks
 
 SYNOPSIS
-       `basename $0` [-s] -i file -d dir
+       `basename $0` [-s] -i file -d dir [-S] [-m rows|cols]
 
 DESCRIPTION
        Split an image in boxes containing the composed images, removing blanks
@@ -29,6 +32,12 @@ DESCRIPTION
 
        -d dir
               Folder where the images are stored
+
+       -S
+              Split is executed once. By default done until all white is removed
+
+       -m R|C
+              If the split is executed once, this is done in Rows or Columns (def: $splitOnceMode)
 
 EOF
 }
@@ -179,7 +188,7 @@ function splitImg() {
 # =================================================
 # Arguments
 # =================================================
-while getopts "hsd:i:" opt
+while getopts "hsd:i:Sm:" opt
 do
   case $opt in
     s) silent=1 ;;
@@ -189,6 +198,8 @@ do
       ;;
     i) image=$OPTARG ;;
     d) dstDir=$OPTARG ;;
+    S) doSplitOnce=1 ;;
+    m) splitOnceMode=$OPTARG ;;
     *)
       echo "Invalid option: -$OPTARG" >&2
       exit 1
@@ -224,90 +235,95 @@ rebuildDir $workDir
 rebuildDir $tmpDir
 rebuildDir $dstDir
 
-cat<<EOD
+if [ $doSplitOnce -eq 1 ]
+then
+  splitImg $image $splitOnceMode $dstDir
+else
+  cat<<EOD
 in : $inDir
 work : $workDir
 tmp : $tmpDir
 dst : $dstDir
 EOD
 
-# The loop consist in 5 phases for every image
-# 1) Remove margins
-# 2) Split Rows
-#    - Changes : for every image repeat loop
-#    - No Chages:
-# 3) Split in Cols
-#    - Changes : for every image repeat loop
-#    - No Chages: Final image, ypu can keep it
-cp $image $inDir
-
-# Loop over all the images in $inDir
-files=$(ls -1 $inDir/*)
-step=0
-rebuildDir tmp
-while [ ! -z "$files" ]
-do
-  # TMP
-  mkdir tmp/$step
-  cp -r $inDir    tmp/$step/IN 
-  cp -r $workDir  tmp/$step/WORK
-  cp -r $dstDir   tmp/$step/OUT
-  step=$(($step+1))
-  # TMP
-
-  for f in $files
+  # The loop consist in 5 phases for every image
+  # 1) Remove margins
+  # 2) Split Rows
+  #    - Changes : for every image repeat loop
+  #    - No Chages:
+  # 3) Split in Cols
+  #    - Changes : for every image repeat loop
+  #    - No Chages: Final image, ypu can keep it
+  cp $image $inDir
+  
+  # Loop over all the images in $inDir
+  files=$(ls -1 $inDir/*)
+  step=0
+  rebuildDir tmp
+  while [ ! -z "$files" ]
   do
-    echo "Processing $f..."
-
-    echo "Splitting in ROWS ..."
-
-    # Split in rows
-    rm $workDir/* 2>/dev/null
-    splitImg $f "rows" $workDir
+    # TMP
+    mkdir tmp/$step
+    cp -r $inDir    tmp/$step/IN 
+    cp -r $workDir  tmp/$step/WORK
+    cp -r $dstDir   tmp/$step/OUT
+    step=$(($step+1))
+    # TMP
   
-    # Check if has generates new images
-    # For a strane reason diff says there are changes when not ..
-    changed=1
+    for f in $files
+    do
+      echo "Processing $f..."
   
-    if [[ $(ls -1 $workDir/*|wc -l) -eq 1 && "$(identify -format "%wx%h" $f)" == "$(identify -format "%wx%h" $workDir/*)" ]]
-    then
-      changed=0
-    fi
+      echo "Splitting in ROWS ..."
   
-    if [ $changed -eq 1 ]
-    then
-      echo "[ROWS] : Generated $(ls -1 $workDir/*)"
-    # No Changes? Try Split H
-    else
-      echo "Split in COLS ..."
-
-      rm $workDir/*
-      splitImg $f "cols" $workDir
-  
-      # Check if the image has changed
+      # Split in rows
+      rm $workDir/* 2>/dev/null
+      splitImg $f "rows" $workDir
+    
+      # Check if has generates new images
+      # For a strane reason diff says there are changes when not ..
       changed=1
-  
+    
       if [[ $(ls -1 $workDir/*|wc -l) -eq 1 && "$(identify -format "%wx%h" $f)" == "$(identify -format "%wx%h" $workDir/*)" ]]
       then
         changed=0
       fi
-
-      # No changes? Keep if
+    
       if [ $changed -eq 1 ]
       then
-        echo "[COLS] : Generated $(ls -1 $workDir/*)"
-        echo "Generated new images split in columns!"
+        echo "[ROWS] : Generated $(ls -1 $workDir/*)"
+      # No Changes? Try Split H
       else
-        echo "Keeping image $workDir/*"
-        mv $workDir/* $dstDir
-      fi 
-    fi
-
-    # Copy the files , we must process them
-    cp $workDir/* $inDir
-    # Remove the file
-    rm $f
-  done # for files in inDir
-
-  files=$(ls -1 $inDir/*)
-done
+        echo "Split in COLS ..."
+  
+        rm $workDir/*
+        splitImg $f "cols" $workDir
+    
+        # Check if the image has changed
+        changed=1
+    
+        if [[ $(ls -1 $workDir/*|wc -l) -eq 1 && "$(identify -format "%wx%h" $f)" == "$(identify -format "%wx%h" $workDir/*)" ]]
+        then
+          changed=0
+        fi
+  
+        # No changes? Keep if
+        if [ $changed -eq 1 ]
+        then
+          echo "[COLS] : Generated $(ls -1 $workDir/*)"
+          echo "Generated new images split in columns!"
+        else
+          echo "Keeping image $workDir/*"
+          mv $workDir/* $dstDir
+        fi 
+      fi
+  
+      # Copy the files , we must process them
+      cp $workDir/* $inDir
+      # Remove the file
+      rm $f
+    done # for files in inDir
+  
+    files=$(ls -1 $inDir/*)
+  done
+fi # doSplitOnce
