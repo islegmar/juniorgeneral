@@ -13,10 +13,8 @@
 # Type of objects and its height in cm
 TYPE_OF_OBJECTS="
 man#170\n
-man+#200\n
-horse-spear#320\n
-knights#320\n
-lancer#250\n
+man+#190\n
+knight-lancer#320\n
 "
 INCHES_TO_CM=2.54
 

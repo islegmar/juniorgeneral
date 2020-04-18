@@ -1,7 +1,7 @@
 #!/bin/bash
 
 [ ! -f $cfgFile ] && touch $cfgFile
-cfgFile="config/images.csv"
+cfgFile="config/images.txt"
 
 cat<<EOD
 =================================
@@ -11,61 +11,52 @@ cat<<EOD
 EOD
 read
 
-baseSrcDir="images/changed02"
+baseSrcDir="images/changed02/"
+baseDstDir="images/final/pieces/"
+
+# To keep spaces when reading lines
+OLD_IFS=$IFS
+IFS=''
+fPattern="[^ ]*- ([^ ]*) *: *([^ ]*)"
+declare -a path
 while read -r line
 do
-  #echo "line : $line"
-  # Example:
-  # - file : www.juniorgeneral.org/mediaval/EnglishTroops/EnglishTroops-2-6-0-0.png|
-  file="${baseSrcDir}/$(echo $line |cut -d '|' -f 1,1)"
-  type=$(echo $line |cut -d '|' -f 2,2)
-  dst=$(echo $line  |cut -d '|' -f 3,3)
-  split=$(echo $line|cut -d '|' -f 4,4)
-
-  # baseFile contains just the name of the file (no directory) without
-  # extension so we can use it for building
-  # the names of the front / back
-  # - EnglishTroops-2-6-0-0
-  baseFile=$(basename $file|sed -e 's#\..*##')
-
-  if [ -z "$dst" ]
+  # File
+  if [[ $line =~ $fPattern ]]
   then
-    echo "No dst folder specified, ignore line $line!"
-    continue
-  fi
+    # eg. EnglishTroops-3-5-0
+    fileName=${BASH_REMATCH[1]}
+    type=${BASH_REMATCH[2]}
+  
+    # Calculate the dstFile
+    dstDir="${baseDstDir}"
+    for s in "${path[@]}"
+    do
+      dstDir="${dstDir}${s}/"
+    done
+    [ ! -d ${dstDir} ] && mkdir -p ${dstDir}
+    dstFile="${dstDir}${fileName}.png"
+  
+    # Find the srcFile
+    srcFile=$(find $baseSrcDir -type f -name "${fileName}.png")
+    echo "Processing [$type] $dstFile ..."
+    #echo "dstFile : $dstFile"
 
-  dstDir="images/final/pieces/${dst}"
-
-  # If already exist the files, skip it
-  if [ $(ls -1 $dstDir/${baseFile}* 2>/dev/null|wc -l) -ne 0 ]
-  then
-    echo "Skip $file, already processes"
-  else
-    echo "Processing $file into $dstDir (type : $type)..."
-    [ ! -d $dstDir ] && mkdir -p $dstDir
-
-    # Split in half
     splitBackFront.sh \
       -s \
-      -i $file \
-      -o $dstDir/${baseFile}.png \
-      -t $type 
-    # # Height given
-    # if [ -z "$(echo $type|sed -e 's/[0-9]//g')" ]
-    # then
-    #   splitBackFront.sh \
-    #     -i $file \
-    #     -o $dstDir/${baseFile}.png \
-    #     -k $split \
-    #     -H $type 
-    # else
-    #   splitBackFront.sh \
-    #     -i $file \
-    #     -o $dstDir/${baseFile}.png \
-    #     -t $type 
-    # fi
+      -i ${srcFile} \
+      -o ${dstFile} \
+      -t ${type}
+  # Level
+  else
+    numSpaces=$(echo $line|sed -e 's/[^ ]*$//'|wc -c)
+    frg=$(echo $line|sed -e 's/^ *//')
+    level=$(($numSpaces/2))
+    #echo "(level: $level) (frg: $frg) (line: $line)"
+    path[$level]=${frg}
   fi
-done < <( grep -v '^#' $cfgFile )
+done < <( grep -v '^#' $cfgFile|grep -v '^ *$' )
+IFS=$OLD_IFS
 
 cat<<EOD
 =================================
