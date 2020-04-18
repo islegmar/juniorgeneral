@@ -1,17 +1,20 @@
 #!/bin/bash
+set -u
 
 # =================================================
 # Variables
 # =================================================
 silent=0
 image=""
-inDir="/tmp/$(basename $0).$$.in"
-workDir="/tmp/$(basename $0).$$.work"
-tmpDir="/tmp/$(basename $0).$$.tmp"
 dstDir=""
 # If split done once
 doSplitOnce=0
 splitOnceMode="rows"
+
+tmpDir="/tmp/$(basename $0).$$"
+inDir="$tmpDir/in"
+workDir="$tmpDir/work"
+debugDir="$tmpDir/debug"
 
 # =================================================
 # Functions
@@ -43,144 +46,152 @@ EOF
 }
 
 function trace() {
-  [ $silent -eq 0 ] && echo $*
+  [ $silent -eq 0 ] && echo $* >&2
 }
 
 function rebuildDir() {
-  local dir=$1
+  local _dir=$1
 
-  [ -d $dir ] && rm -fR $dir
-  [ ! -d $dir ] && mkdir -p $dir
+  [ -d ${_dir} ] && rm -fR ${_dir}
+  [ ! -d ${_dir} ] && mkdir -p ${_dir}
 }
 
 # Given an image return a string containing the characters W and C 
 # (eg. WWWCCCCWWCWWC) indicating (depending on mode) if the 
 # ROWS/COLS are ALL White (W) or there are some non-white (C)
 # This is useful for detecting "empty" ROWS/COLS and remove them (margins) 
-# ir to know where we can split the image
+# to know where we can split the image
 function getImageWC() {
-  local image=$1
-  local mode=$2
+  local _image=$1
+  local _mode=$2
 
-  local str=""
-  local tmpFile=$tmpDir/$$
+  #trace "getImageWC(${_image}, ${_mode})"
 
-  local tot=0
-  case $mode in
+  local _str=""
+  local _tmpFile="$tmpDir/getImageWC"
+
+  local _tot=0
+  case ${_mode} in
     # Colapse to one column
     rows) 
-      tot=$(identify -format "%h" $image) 
-      convert ${image} -resize "1x${tot}!" $tmpFile
+      _tot=$(identify -format "%h" ${_image}) 
+      convert ${_image} -strip -resize "1x${_tot}!" ${_tmpFile}
       ;;
     # Colapse to one row
     *)    
-      tot=$(identify -format "%w" $image) 
-      convert ${image} -resize "${tot}x1!" $tmpFile
+      _tot=$(identify -format "%w" ${_image}) 
+      convert ${_image} -strip -resize "${_tot}x1!" ${_tmpFile}
       ;;
   esac
+  #trace "  _tot : ${_tot}"
 
   # Loop through all rows/cols
-  local ind=0
-  for ((ind=0; ind<tot; ind++))
+  local _ind=0
+  for ((_ind=0; _ind<_tot; _ind++))
   do
-     local num=0
-     case $mode in
-       rows) num=$(convert $tmpFile[1x1+0+${ind}] txt: | grep -v enumeration | grep -c '#FFFFFF') ;;
-       *)    num=$(convert $tmpFile[1x1+${ind}+0] txt: | grep -v enumeration | grep -c '#FFFFFF') ;;
+     local _num=0
+     case ${_mode} in
+       rows) _num=$(convert ${_tmpFile}[1x1+0+${_ind}] txt: | grep -v enumeration | grep -c '#FFFFFF') ;;
+       *)    _num=$(convert ${_tmpFile}[1x1+${_ind}+0] txt: | grep -v enumeration | grep -c '#FFFFFF') ;;
      esac
 
-     if [ $num -eq 1 ]
+     #trace "  _ind : ${_ind}, _num : ${_num}"
+
+     if [ ${_num} -eq 1 ]
      then
-       str="${str}W"
+       _str="${_str}W"
      else
-       str="${str}C"
+       _str="${_str}C"
      fi
   done
    
-  echo "$str"
+  echo "${_str}"
 }
 
 # Given a string with W/C (eg. WWWCCCCWWCCWW) return the values of the limits at both sides with W;
 # e.g "3 2" (there are 3 Whites in the beginning and 2 W at the end)
 function getHeadTot() {
-  local str=$1
+  local _str=$1
 
-  local frg=$(echo $str|sed -e 's/\(^W*\).*/\1/')
+  local _frg=$(echo ${_str}|sed -e 's/\(^W*\).*/\1/')
 
-  echo ${#frg}
+  echo ${#_frg}
 }
 
 function getTailTot() {
-  local str=$1
+  local _str=$1
 
-  local frg=$(echo $str|rev|sed -e 's/\(^W*\).*/\1/')
+  local _frg=$(echo ${_str}|rev|sed -e 's/\(^W*\).*/\1/')
 
-  echo ${#frg}
+  echo ${#_frg}
 }
 
 # Given an image, remove the empty blanks top/bottom/left/right
 function removeMargins() {
-  local image=$1
-  local dstImage=$2
+  local _image=$1
+  local _dstImage=$2
 
-  local rows=$(getImageWC $image "rows")
-  local cols=$(getImageWC $image "cols")
+  local _rows=$(getImageWC $_image "rows")
+  local _cols=$(getImageWC $_image "cols")
 
   # find the limits top, bottom, left, right
-  local top=$(getHeadTot $rows)
-  local bottom=$(getTailTot $rows)
-  local left=$(getHeadTot $cols)
-  local right=$(getTailTot $cols)
+  local _top=$(getHeadTot $_rows)
+  local _bottom=$(getTailTot $_rows)
+  local _left=$(getHeadTot $_cols)
+  local _right=$(getTailTot $_cols)
 
-  convert $image -crop +${left}+${top} -crop -${right}-${bottom} $dstImage
+  convert $_image -strip -crop +${_left}+${_top} -crop -${_right}-${_bottom} $_dstImage
 }
 
 # Given an image, split in rows/columns and keep the non-white portions in dstDir
 function splitImg() {
-  local image=$1
-  local mode=$2
-  local dstDir=$3
+  local _image=$1
+  local _mode=$2
+  local _dstDir=$3
 
-  local imgName="$dstDir/$(basename $image|sed -e 's/\..*//')"
-  local imgExt=$(basename $image|sed -e 's/.*\.//')
+  # Get the name of the image (without extension) and the extension.
+  # They will be used to generate the name of the files produced
+  local _imgName="$_dstDir/$(basename $_image|sed -e 's/\..*//')"
+  local _imgExt=$(basename $_image|sed -e 's/.*\.//')
 
-  local str=""
-  case $mode in
-    rows) str=$(getImageWC $image "rows") ;;
-    *)    str=$(getImageWC $image "cols") ;;
+  local _str=""
+  case $_mode in
+    rows) _str=$(getImageWC $_image "rows") ;;
+    *)    _str=$(getImageWC $_image "cols") ;;
   esac
 
   # Make a copy or the image because we're goint to modify it
-  local myImg="$tmpDir/$(basename $image)"
-  cp $image $myImg
-  echo "myImg : $myImg"
+  local _myImg="$tmpDir/$(basename $image)"
+  cp $_image $_myImg
 
-  local index=0
-  while [ ${#str} -ne 0 ]
+  local _index=0
+  while [ ${#_str} -ne 0 ]
   do
-    local ch=${str:0:1} 
-    local frg=$(echo $str|sed -e "s/\(^${ch}*\).*/\1/")
-    str=$(echo $str|sed -e "s/^${ch}*//")
-    #index=$(($index+1)) 
+    # Get in _frg a chunk of characters that are equals.
+    # Fex. if _str=WWCCCWWWW then
+    # - _frg = WW (first chunck)
+    # - _str = CCCWWWW (the rest)
+    local _ch=${_str:0:1} 
+    local _frg=$(echo $_str|sed -e "s/\(^${_ch}*\).*/\1/")
+    _str=$(echo $_str|sed -e "s/^${_ch}*//")
 
-    # echo "ch:$ch"
-    echo "frg:$frg"
-    # echo "str:$str"
-    # Non white strip, keep it
-    if [ "$ch" == "C" ]
+    trace "frg:$_frg"
+
+    # Block is non white => keep it
+    if [ "$_ch" == "C" ]
     then
-      local file=${imgName}-${index}.${imgExt}
-      case $mode in
-        rows) convert $myImg -crop x${#frg}+0+0 $file ;;
-        *)    convert $myImg -crop ${#frg}x+0+0 $file ;;
+      local _file=${_imgName}-${_index}.${_imgExt}
+      case $_mode in
+        rows) convert $_myImg -strip -crop x${#_frg}+0+0 $_file ;;
+        *)    convert $_myImg -strip -crop ${#_frg}x+0+0 $_file ;;
       esac
-      index=$(($index+1)) 
+      _index=$(($_index+1)) 
     fi
 
     # Remove block from the original image
-    case $mode in
-      rows) convert $myImg -chop 0x${#frg}+0+0 $myImg ;;
-      *)    convert $myImg -chop ${#frg}x0+0+0 $myImg ;;
+    case $_mode in
+      rows) convert $_myImg -strip -chop 0x${#_frg}+0+0 $_myImg ;;
+      *)    convert $_myImg -strip -chop ${#_frg}x0+0+0 $_myImg ;;
     esac
   done
 }
@@ -230,21 +241,25 @@ fi
 # main
 # =================================================
 
+rebuildDir $tmpDir
 rebuildDir $inDir
 rebuildDir $workDir
-rebuildDir $tmpDir
+rebuildDir $debugDir
 rebuildDir $dstDir
 
 if [ $doSplitOnce -eq 1 ]
 then
   splitImg $image $splitOnceMode $dstDir
 else
-  cat<<EOD
+  if [ $silent -eq 0 ]
+  then
+    cat<<EOD
 in : $inDir
 work : $workDir
 tmp : $tmpDir
 dst : $dstDir
 EOD
+  fi
 
   # The loop consist in 5 phases for every image
   # 1) Remove margins
@@ -257,24 +272,24 @@ EOD
   cp $image $inDir
   
   # Loop over all the images in $inDir
-  files=$(ls -1 $inDir/*)
+  files=$(ls -1 $inDir/* 2>/dev/null)
+  # For debugging
   step=0
-  rebuildDir tmp
   while [ ! -z "$files" ]
   do
-    # TMP
-    mkdir tmp/$step
-    cp -r $inDir    tmp/$step/IN 
-    cp -r $workDir  tmp/$step/WORK
-    cp -r $dstDir   tmp/$step/OUT
+    # Debug
+    mkdir -p $debugDir/$step
+    cp -r $inDir    $debugDir/$step/IN    2>/dev/null
+    cp -r $workDir  $debugDir/$step/WORK  2>/dev/null
+    cp -r $dstDir   $debugDir/$step/OUT   2>/dev/null
     step=$(($step+1))
-    # TMP
+    # Debug
   
     for f in $files
     do
-      echo "Processing $f..."
+      trace "Processing $f..."
   
-      echo "Splitting in ROWS ..."
+      trace "Splitting in ROWS ..."
   
       # Split in rows
       rm $workDir/* 2>/dev/null
@@ -291,10 +306,10 @@ EOD
     
       if [ $changed -eq 1 ]
       then
-        echo "[ROWS] : Generated $(ls -1 $workDir/*)"
+        trace "[ROWS] : Generated $(ls -1 $workDir/*)"
       # No Changes? Try Split H
       else
-        echo "Split in COLS ..."
+        trace "Split in COLS ..."
   
         rm $workDir/*
         splitImg $f "cols" $workDir
@@ -310,20 +325,20 @@ EOD
         # No changes? Keep if
         if [ $changed -eq 1 ]
         then
-          echo "[COLS] : Generated $(ls -1 $workDir/*)"
-          echo "Generated new images split in columns!"
+          trace "[COLS] : Generated $(ls -1 $workDir/*)"
+          trace "Generated new images split in columns!"
         else
-          echo "Keeping image $workDir/*"
+          trace "Keeping image $workDir/*"
           mv $workDir/* $dstDir
         fi 
       fi
   
       # Copy the files , we must process them
-      cp $workDir/* $inDir
+      cp $workDir/* $inDir 2>/dev/null
       # Remove the file
       rm $f
     done # for files in inDir
   
-    files=$(ls -1 $inDir/*)
+    files=$(ls -1 $inDir/* 2>/dev/null)
   done
 fi # doSplitOnce

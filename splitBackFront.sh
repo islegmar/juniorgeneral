@@ -12,9 +12,10 @@
 # =================================================
 # Type of objects and its height in cm
 TYPE_OF_OBJECTS="
-man#180\n
+man#170\n
 man+#200\n
 horse-spear#320\n
+knights#320\n
 lancer#250\n
 "
 INCHES_TO_CM=2.54
@@ -81,7 +82,7 @@ EOF
 }
 
 function trace() {
-  [ $silent -eq 0 ] && echo $*
+  [ $silent -eq 0 ] && echo $* >&2
 }
 
 # =================================================
@@ -122,6 +123,14 @@ then
   errors="${errors}File $inFile does not exist. "
 fi
 
+if [[ ! -z "$type" ]]
+then
+  if [[ -z "$(echo -e $TYPE_OF_OBJECTS|grep -e "$type#")" ]]
+  then
+    errors="${errors}Unknown type ${type}. "
+  fi
+fi
+
 # if [[ -z "$posSplit" ]]
 # then
 #   errors="${errors}A split value must be provided. "
@@ -150,16 +159,27 @@ hInPx=$(echo "${hInIn}*${resolution}"|bc -l|sed -e 's/\..*$//')
 # Split in two parts and scale to the desire height
 if [ -z "$posSplit" ]
 then
-  posSplit=$(($(identify -format "%h" ${inFile})/2))
+  imgH=$(identify -format "%h" ${inFile})
+  posSplit=$((${imgH}/2))
 fi
-trace "inFileW : $(identify -format "%w" ${inFile}), hInPx : ${hInPx}, posSplit: ${posSplit}"
+#trace "inFileW : $(identify -format "%w" ${inFile}), hInPx : ${hInPx}, posSplit: ${posSplit}"
 
 # When cropping, if w not specified we have problems of back and front diffente width and not aligned, so
 # better to specify explicit the width
 # Height of both parts MUST be the same or when scaling they will have different heights
 width=$(identify -format "%w" ${inFile})
-convert $inFile -crop ${width}x${posSplit}+0+0!                   -resize x${hInPx} ${tmpFile}.front.png
-convert $inFile -crop ${width}x${posSplit}+0+$((${posSplit}+1))!  -resize x${hInPx} ${tmpFile}.back.png
+
+# [ $silent -eq 0 ] && set -x
+# In some xases (not sure why) the image has an odd height and in other an even one
+if [[ $((${imgH} % 2)) == 0 ]]
+then
+  convert $inFile -crop x${posSplit}+0+0!                   -resize x${hInPx} ${tmpFile}.front.png
+  convert $inFile -crop x${posSplit}+0+$((${posSplit}+0))!  -resize x${hInPx} ${tmpFile}.back.png
+else
+  convert $inFile -crop x${posSplit}+0+0!                   -resize x${hInPx} ${tmpFile}.front.png
+  convert $inFile -crop x${posSplit}+0+$((${posSplit}+1))!  -resize x${hInPx} ${tmpFile}.back.png
+fi
+#[ $silent -eq 0 ] && set +x
 
 if [ $(identify -format "%w" ${tmpFile}.back.png) -ne  $(identify -format "%w" ${tmpFile}.front.png) ]
 then
