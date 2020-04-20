@@ -5,15 +5,17 @@
 # =================================================
 # Variables
 # =================================================
-silent=0
 #tmpFile=/tmp/$(basename $0).$$
 tmpFile=/tmp/$(basename $0)
+
+silent=0
 outFile="army.png"
 images=""  # List of all images used as input
 isImgFull=0
+
 # Reize allowed im the images (in %)
-resizeLessPerc=90
-resizeMorePerc=110
+resizeLessPerc=100
+resizeMorePerc=100
 
 # TODO : this should be a parameter but let's suppose the final canvas is 
 # an A4 8.27 × 11.69 inches with resolution 300 ppi (we leave some borders)
@@ -22,12 +24,33 @@ canvasW=$(echo "8.27*$resolution"|bc -l)
 canvasH=$(echo "11.69*$resolution"|bc -l)
 # In pixels, we want to leave 1 cm more or less that with a resolution 300ppi
 # than means 100px
-borderCanvas=10
+borderCanvas=0
+
 # Border in the image (px)
 imageBorder=0
 
-cellWithIn=6
+# Separation (in pixels) between columns and rows
+sepColInPx=80
+sepRowInPx=80
+
+# Color used in the separation (it corresponds to the terrain)
+sepColColor="#4d2600"  # Brown
+sepRowColor="white"  # Brown
+
+# Border in the North, South, East and Wet of every cell (in pixels)
+borderN=0
+borderS=0
+borderE=0
+borderW=0
+
+# Color in the border
+borderColor=white
+
 cellNumRows=2
+cellNumCols=2
+
+# Total cells generated; if not specified so many as possible
+totCells=""
 
 # =================================================
 # Functions
@@ -38,7 +61,11 @@ NAME
        `basename $0` - Generates an army using a back and front images 
 
 SYNOPSIS
-       `basename $0` [-s] [-F] [-o file] [-r number] [-w inches] images
+       `basename $0` [-s] [-F] [-o file] [-t number]
+          [-c number] [-C pixel] [-L color] 
+          [-r number] [-R pixel] [-O color]
+          [-N pixel] [-S pixel] [-E pixel] [-W pixel] [-B color] 
+          images
 
 DESCRIPTION
        Generates an army in two modes:
@@ -53,16 +80,40 @@ DESCRIPTION
        -o file
               Output file with the image containing the army (def: $outFile)
 
+       -t number
+              Number of cells generated. If not specified, maximum number of cells will be generated.
+
+       -c number
+              Number of columns in each group (def: $cellNumCols)
+
+       -C pixel
+              Separation in pixel between columns (def: $sepColInPx)
+
+       -L color
+              String represents the color used in the space between coLumns (def: $sepColColor)
+
        -r number
               Number of rows in each group (def: $cellNumRows)
 
-       -w inches
-              Width (in inches) for every cell (def: $cellWithIn)
+       -R pixel
+              Separation in pixel between rows (def: $sepRowInPx)
+
+       -O color
+              String represents the color used in the space between rOws (def: $sepRowColor)
+
+       -N, -S, -E, -W  pixel
+              Border in the North, South, East, West in every cell (def: 0)
+
+       -B color
+              Color used in the border
+
+       #-w inches
+       #       Width (in inches) for every cell (def: $cellWithIn)
 EOF
 }
 
 function trace() {
-  [ $silent -eq 0 ] && echo $*
+  [ $silent -eq 0 ] && echo $* >&2
 }
 
 # TODO : patillero
@@ -78,6 +129,73 @@ function getMaxW() {
 function getMaxH() {
   echo $(ls -1 $* |xargs identify -format "%h\n"|sort -nr|head -n 1)
 }
+
+# Join cols to make a row
+# - All the same height
+# - Leave an space in between
+# NOTE : this function CHANGE the images
+function joinCols() {
+  local _spaceInPx=$1
+  local _spaceColor=$2
+  local _gravity=$3
+  local _outImg=$4
+  shift 4
+  local _images=$*
+ 
+  local _maxH=$(getMaxH ${_images})
+
+  # Add a margin at the left of every image (not in the first)
+  local _img=""
+  local _tmpSep=0
+  for _img in ${_images}
+  do
+    #trace "sep : ${_tmpSep}, maxH : ${_maxH}"
+    convert \
+      \( -size ${_tmpSep}x${_maxH} xc:${_spaceColor} \) \
+      -gravity ${_gravity} \
+      ${_img} \
+      +append \
+      ${_img}
+
+    _tmpSep=${_spaceInPx}
+  done
+
+  # Now put all the images together in a row
+  convert  ${_images} +append ${_outImg}
+}
+# Build a row of images:
+# - All the same height
+# - Leave an space in between
+# NOTE : this function CHANGE the images
+function joinRows() {
+  local _spaceInPx=$1
+  local _spaceColor=$2
+  local _gravity=$3
+  local _outImg=$4
+  shift 4
+  local _images=$*
+ 
+  local _maxW=$(getMaxW ${_images})
+
+  # Add a margin at the top of every image (not in the first)
+  local _img=""
+  local _tmpSep=0
+  for _img in ${_images}
+  do
+    # trace "sep : ${_tmpSep}, maxH : ${_maxH}"
+    convert \
+      \( -size ${_maxW}x${_tmpSep} xc:${_spaceColor} \) \
+      ${_img} \
+      -append \
+      ${_img}
+
+    _tmpSep=${_spaceInPx}
+  done
+
+  # Now put all the images together in a row
+  convert  ${_images} -append ${_outImg}
+}
+ 
 
 function getRandomValue() {
   local _images=$*
@@ -129,31 +247,31 @@ function getRandomImage() {
 # Build a "cell" that depending on the configuration can be
 # composed by just one image or a group of them
 function getCell() {
-  local img=$1
-  local imageBorder=$2
+  local _img=$1
+  local _imageBorder=$2
   shift 2
-  local images=$*
+  local _images=$*
   
-  getRandomImage $img $imageBorder $images
+  getRandomImage ${_img} ${_imageBorder} ${_images}
 }
 
 # Build a rectangle with a group of elements
-# @width : with in Inches that form the bases
-# @numRows : number of rows (we prefer this method that specify inches)
 # This method is used working with front / back separated; I have tried to be "agnotstic"
 # if the images are complete or not but it makes too difficult and probably has no sense
 function getCellGroup() {
   local _outImg=$1
   local _imageBorder=$2
-  local _width=$3
+  local _numCols=$3
   local _numRows=$4
-  shift 4
+  local _sepColsInPx=$5
+  local _sepRowsInPx=$6
+  shift 6
   local _images=$*
   
   local _tmpFile=${tmpFile}.getCellGroup
   rm ${_tmpFile}* 2>/dev/null
 
-  # Build one by one all the rows an then put them together
+  # Build one by one all the rows an then at the end put them together
   rm ${_tmpFile}.row.*.png 2>/dev/null
   local _row=0
   for ((_row=0;_row<${_numRows};_row++))
@@ -164,100 +282,53 @@ function getCellGroup() {
     # - Put them together and create the row
     # When building the front/back we align them and leave space to the highest
 
-    local _freeW=$((${_width}*${resolution}))
-
     rm ${_tmpFile}.col.*.png 2>/dev/null
+
+    # Create the 'cols' with the backs and the fronts
     local _col=0
-    for ((_col=0; ;_col++))
+    for ((_col=0; _col<${_numCols} ;_col++))
     do
       local _imageFront=$( getRandomValue $_images )
       local _imageBack=$( echo  $_imageFront|sed -e 's/-front/-back/' )
       local _resize=$( getRandomResize )
 
       # Generate the single image for this col (front and back)
-      convert \( -size ${_imageBorder}x xc:red \)     \
-              \( -resize ${_resize}% ${_imageFront} \)  \
-              \( -size ${_imageBorder}x xc:red \)     \
-              +append                                   \
-              ${_tmpFile}.front.${_col}.png 
-
-      convert \( -size ${_imageBorder}x xc:red \)     \
-              \( -resize ${_resize}% ${_imageBack} \)   \
-              \( -size ${_imageBorder}x xc:red \)     \
-              +append                                   \
-              ${_tmpFile}.back.${_col}.png 
-
-      trace "Col : ${_col}, frontW : $(identify -format "%w" ${_tmpFile}.front.${_col}.png), backW : $( identify -format "%w" ${_tmpFile}.back.${_col}.png )"
-
-      local _imgW=$(identify -format "%w" ${_tmpFile}.front.${_col}.png )
-
-      # There is room for this image
-      if [ ${_imgW} -le ${_freeW} ]
-      then
-        _freeW=$((${_freeW}-${_imgW}))
-      # Remove the last image created because there is no room
-      else
-        rm ${_tmpFile}.back.${_col}.png 
-        rm ${_tmpFile}.front.${_col}.png 
-      fi
-
-      # Check again because if the block we have just made is bigger than
-      # the remainign probably the next block we will have the same dimensions
-      # and it has no sense to continue
-      if [ ${_imgW} -gt ${_freeW} ]
-      then
-        # Ok, I have try to make it in a sigle command but I do not 
-        # find the way to concat all the images (eg.back) in a image stack \( ... \)
-        # so,,,
-        convert  ${_tmpFile}.back.*.png  -gravity north +append ${_tmpFile}.rowBack.${_row}.png
-        convert  ${_tmpFile}.front.*.png -gravity south +append ${_tmpFile}.rowFront.${_row}.png
-
-        # Now we should create a row that should be: basis + back + front + basis but
-        # becauase every back/front have different sizes let's do it at the end when we
-        # get the max values
-        break
-      fi
+      convert -resize ${_resize}% ${_imageFront} ${_tmpFile}.front.${_col}.png
+      convert -resize ${_resize}% ${_imageBack}  ${_tmpFile}.back.${_col}.png
     done # loop cols
+
+    # Put all the columns together and create the row with the backs and the row with the fronts
+    joinCols ${sepColInPx} ${sepColColor} north ${_tmpFile}.rowBack.${_row}.png  ${_tmpFile}.back.*.png 
+    joinCols ${sepColInPx} ${sepColColor} south ${_tmpFile}.rowFront.${_row}.png ${_tmpFile}.front.*.png 
+
+    # Put back and front together to create a row
+    joinRows 2 gray center ${_tmpFile}.row.${_row}.png ${_tmpFile}.rowBack.${_row}.png ${_tmpFile}.rowFront.${_row}.png
   done # loop rows
 
-  # Create the basis and build the rows
-  local _maxW=$(getMaxW ${_tmpFile}.rowBack.*.png)
-  local _maxH=$(getMaxH ${_tmpFile}.rowBack.*.png)
-  local _file=""
-  for ((_row=0;_row<${_numRows};_row++))
-  do
-    trace "Row : ${_row}, frontW : $(identify -format "%w" ${_tmpFile}.rowFront.${_row}.png), backW : $( identify -format "%w" ${_tmpFile}.rowBack.${_row}.png )"
-    montage \
-      \( -size "${_maxW}x$((${_maxH}/4))" xc:"#4d2600"  \) \
-      ${_tmpFile}.rowBack.${_row}.png \
-      \( -size "${_maxW}x2" xc:gray \) \
-      ${_tmpFile}.rowFront.${_row}.png \
-      \( -size "${_maxW}x$((${_maxH}/4))" xc:"#4d2600"  \) \
-      -tile 1x \
-      -geometry +0+0 \
-      -background white \
-     ${_tmpFile}.row.${_row}.png 
-  done
-
   # Now just put all the rows together
-  montage \
-    ${_tmpFile}.row.*.png \
-    -tile 1x \
-    -geometry +0+00 \
-    -gravity north \
-    -background white \
-    ${_outImg}
+  joinRows ${sepRowInPx} ${sepRowColor} center ${_outImg} ${_tmpFile}.row.*.png 
+
+  # Add border (if any) in N, S, E, W
+  local _outImgW=$(identify -format "%w" ${_outImg})
+  local _outImgH=$(identify -format "%h" ${_outImg})
+
+  [ $borderN -ne 0 ] && convert \( -size ${_outImgW}x${borderN} xc:${borderColor} \) ${_outImg} -append  ${_outImg}
+  [ $borderS -ne 0 ] && convert ${_outImg} \( -size ${_outImgW}x${borderS} xc:${borderColor} \) -append  ${_outImg}
+  [ $borderE -ne 0 ] && convert ${_outImg} \( -size ${borderE}x${_outImgH} xc:${borderColor} \) +append  ${_outImg}
+  [ $borderW -ne 0 ] && convert \( -size ${borderW}x${_outImgH} xc:${borderColor} \) ${_outImg} +append  ${_outImg}
+ 
+  # Final border around the cell
+  # TODO : parameter
+  convert -border 10 -bordercolor white ${_outImg} ${_outImg}
 
   # Clean up
   rm ${_tmpFile}* 2>/dev/null
-
-  #echo ${_outImg}
 }
 
 # =================================================
 # Arguments
 # =================================================
-while getopts "hso:Fr:w:" opt
+while getopts "hsFo:t:c:r:C:R:L:O:N:S:E:W:B:" opt
 do
   case $opt in
     h)
@@ -266,9 +337,20 @@ do
       ;;
     s) silent=1 ;;
     o) outFile=$OPTARG ;;
+    t) totCells=$OPTARG ;;
     F) isImgFull=1 ;;
+    c) cellNumCols=$OPTARG ;;
     r) cellNumRows=$OPTARG ;;
-    w) cellWithIn=$OPTARG ;;
+    C) sepColInPx=$OPTARG ;;
+    R) sepRowInPx=$OPTARG ;;
+    L) sepColColor=$OPTARG ;;
+    O) sepRowColor=$OPTARG ;;
+    N) borderN=$OPTARG ;;
+    S) borderS=$OPTARG ;;
+    E) borderE=$OPTARG ;;
+    W) borderW=$OPTARG ;;
+    B) borderColor=$OPTARG ;;
+    #w) cellWithIn=$OPTARG ;;
     *)
       echo "Invalid option: -$OPTARG" >&2
       exit 1
@@ -314,55 +396,50 @@ source ./funcs.sh
 # - Individual figure
 # - Group of them
 
-# Now generate random images and add them
-# TODO : sure this can be done with less temporary files but ...
+# Create "rows" until we have no more space
 freeH=$(roundValue "${canvasH}-2*${borderCanvas}")
 rm $tmpFile.row.${row}.png 2>/dev/null
+numCells=0
 for((row=0; ; row++))
 do
+  [[ ! -z "${totCells}" && ${numCells} -ge ${totCells} ]] && break
+
   tmpImgRow=$tmpFile.row.${row}.png
   trace "Building row $row (free : $freeH) ..."
 
+  # Create "cols" until we have no more space
   freeW=$(roundValue "${canvasW}-2*${borderCanvas}")
   rm $tmpFile.col.*.png 2>/dev/null
   for((col=0; ; col++))
   do
+    [[ ! -z "${totCells}" && ${numCells} -ge ${totCells} ]] && break
+    trace "Generating Cell #${numCells} of ${totCells} ..."
+    numCells=$(($numCells+1))
+
     tmpImgCol=$tmpFile.col.${col}.png
-    getCellGroup $tmpImgCol $imageBorder $cellWithIn $cellNumRows $images
-    convert -border 10 -bordercolor white $tmpImgCol $tmpImgCol
+    getCellGroup $tmpImgCol $imageBorder $cellNumCols $cellNumRows $sepColInPx $sepRowInPx $images
 
     imgW=$(identify -format "%w" $tmpImgCol)
 
     # There is room for this image
-    trace "cellW : $imgW, freeW : $freeW"
+    #trace "cellW : $imgW, freeW : $freeW"
     if [ $imgW  -le  $freeW  ]
     then
       freeW=$((${freeW}-${imgW}))
     # Remove what we have done
     else
       rm $tmpImgCol
-    fi
-
-    if [ $imgW  -gt  $freeW  ]
-    then
       break
     fi
   done # loop cols
 
   # Make the row with all the cells
   trace "Make the row $tmpImgRow with $tmpFile.col.*.png ..."
-
-  montage \
-    $tmpFile.col.*.png \
-    -tile x1 \
-    -geometry +0+0 \
-    -gravity north \
-    -background white \
-    $tmpImgRow
+  joinCols 5 white north $tmpImgRow $tmpFile.col.*.png 
 
   imgH=$(identify -format "%h" $tmpImgRow)
 
-  trace "imgH : $imgH, freeH : $freeH"
+  #trace "imgH : $imgH, freeH : $freeH"
   # There is room for this row
   if [ $imgH -le $freeH ]
   then
@@ -370,22 +447,12 @@ do
   # Put all the rows together and exit
   else
     rm $tmpImgRow
-  fi
-
-  if [ $imgH -gt $freeH ]
-  then
     break
   fi
 done
 
-trace "Building the army with the rows ..."
-montage \
-  $tmpFile.row.*.png \
-  -tile 1x \
-  -geometry +0+0 \
-  -gravity north \
-  -background white \
-  $outFile
-convert -border $borderCanvas -bordercolor white $outFile $outFile
+trace "Put all the rows together ..."
+joinRows 5 white center $outFile $tmpFile.row.*.png 
+#convert -border $borderCanvas -bordercolor white $outFile $outFile
 
-#rm ${tmpFile}* 2>/dev/null
+rm ${tmpFile}* 2>/dev/null

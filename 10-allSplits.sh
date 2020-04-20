@@ -1,7 +1,9 @@
 #!/bin/bash
 
-cfgFile="config/images.csv"
+cfgFile="config/images.txt"
 [ ! -f $cfgFile ] && touch $cfgFile
+
+tmpFile=/tmp/$(basename $0).$$
 
 cat<<EOD
 =================================
@@ -15,6 +17,8 @@ STEP 2:
 =================================
 EOD
 read
+
+rm ${tmpFile}* 2>/dev/null
 
 # --------------------------
 # STEP 1 : split in components
@@ -39,14 +43,16 @@ done
 # --------------------------
 for f in $(find images/changed02 -type f -name '*.png')
 do
-  shortFile=$(echo ${f} | sed -e 's#images/changed02/##')
+  shortFile=$(basename ${f} | sed -e 's#\.[^\.]*$##')
 
   if [ $(grep -c $shortFile $cfgFile) -eq 0 ]
   then
     echo "Add $shortFile in $cfgFile"
-    echo "${shortFile}|-|-|-" >> $cfgFile
+    echo "# - ${shortFile} : " >> $tmpFile
   fi
 done
+
+[ -f $tmpFile ] && sort $tmpFile >>$cfgFile
 
 cat<<EOD
 =================================
@@ -56,3 +62,5 @@ cat<<EOD
 NEXT : 20-allSplitBackFront.sh to split figures in back and front
 =================================
 EOD
+
+rm ${tmpFile}* 2>/dev/null

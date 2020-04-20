@@ -12,6 +12,7 @@ value=""
 valueInIn=1
 valueInPx=1
 valueInCm=1
+valueInInReal=1
 valueInCmReal=1
 
 # =================================================
@@ -23,7 +24,7 @@ NAME
        `basename $0` - Calculator inches / cm / pixels
 
 SYNOPSIS
-       `basename $0` [-s] [-S integer] [-r integer] [-i | -p | -c | -C]  value
+       `basename $0` [-s] [-S integer] [-r integer] [-i | -p | -c | -I | -C]  value
 
 DESCRIPTION
        Given <value> that is a value represented in inches, pixels or centimeters, will transform
@@ -48,6 +49,9 @@ DESCRIPTION
       -c 
               Value is in centimeters (screen)
 
+      -I
+              Value is in inches (real)
+
       -C
               Value is in centimeters (real)
 
@@ -61,7 +65,7 @@ function trace() {
 # =================================================
 # Arguments
 # =================================================
-while getopts "hsd:S:r:ipcC" opt
+while getopts "hsd:S:r:piIcC" opt
 do
   case $opt in
     h)
@@ -71,27 +75,38 @@ do
     s) silent=1 ;;
     S) scale=$OPTARG ;;
     r) resolution=$OPTARG ;;
-    i) 
-      valueInIn=1
-      valueInPx=0 
+    p) 
+      valueInPx=1 
+      valueInIn=0 
+      valueInInReal=0 
       valueInCm=0 
       valueInCmReal=0 
     ;;
-    p) 
-      valueInIn=0 
-      valueInPx=1 
+    i) 
+      valueInPx=0 
+      valueInIn=1
+      valueInInReal=0 
       valueInCm=0 
       valueInCmReal=0 
+    ;;
+    I) 
+      valueInPx=0 
+      valueInIn=0 
+      valueInInReal=1
+      valueInCm=0
+      valueInCmReal=0
     ;;
     c) 
-      valueInIn=0 
       valueInPx=0 
+      valueInIn=0 
+      valueInInReal=0 
       valueInCm=1 
       valueInCmReal=0 
     ;;
     C) 
-      valueInIn=0 
       valueInPx=0 
+      valueInIn=0 
+      valueInInReal=0 
       valueInCm=0
       valueInCmReal=1 
     ;;
@@ -129,6 +144,7 @@ Inches (screen)      : $value
 Pixels               : $(in2Px ${value} ${resolution})
 Centimeters (screen) : $(in2Cm ${value})
 Centimeters (real)   : $(screen2Real $(in2Cm $value) ${scale})
+Inches (real)        : $(screen2Real ${value} ${scale})
 ----------------------------------------
 EOD
 fi
@@ -140,6 +156,7 @@ then
 Pixels              : ${value}
 
 Inches (screen)     : $(px2In ${value} ${resolution})
+Inches (real)       : $(screen2Real $(px2In ${value} ${resolution}) ${scale})
 Centimeters (scren) : $(in2Cm $(px2In ${value} ${resolution}))
 Centimeters (real)  : $(screen2Real $(in2Cm $(px2In ${value} ${resolution})) ${scale})
 ----------------------------------------
@@ -154,6 +171,7 @@ Centimeters (screen) : $value
 
 Pixels               : $(in2Px $(cm2In ${value}) ${resolution})
 Inches (screen)      : $(cm2In ${value})
+Inches (real)        : $(screen2Real $(cm2In ${value}) ${scale})
 Centimeters (real)   : $(screen2Real ${value} ${scale})
 ----------------------------------------
 EOD
@@ -166,11 +184,25 @@ then
 Centimeters (real)    : $value
 
 Centimeters (screen) : $(real2Screen ${value} ${scale})
-Inches (screen)      : $(cm2In $(real2Screen ${value} ${scale}))
-Pixels               : $(in2Px $(cm2In $(real2Screen ${value} ${scale})) ${resolution})
+Inches (screen)      : $(real2Screen $(cm2In ${value}) ${scale})
+Inches (real)        : $(cm2In ${value})
+Pixels               : $(in2Px $(real2Screen $(cm2In ${value}) ${scale}) ${resolution})
 ----------------------------------------
 EOD
 fi
 
+if [ $valueInInReal -eq 1 ]
+then
+  cat<<EOD
+----------------------------------------
+Inches (real)        : $value
+
+Centimeters (screen) : $(real2Screen $(in2Cm ${value}) ${scale})
+Centimeters (real)   : $(in2Cm ${value})
+Inches (screen)      : $(real2Screen ${value} ${scale})
+Pixels               : $(in2Px $(cm2In $(real2Screen ${value} ${scale})) ${resolution})
+----------------------------------------
+EOD
+fi
 rm ${tmpFile}* 2>/dev/null
 
